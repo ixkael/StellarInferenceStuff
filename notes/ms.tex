@@ -1,0 +1,226 @@
+\documentclass{article}
+
+\usepackage{graphicx}
+\usepackage{natbib}
+\usepackage{amsmath}
+\usepackage{url}
+\usepackage{xspace}
+
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{geometry}
+\geometry{
+	tmargin=1.5cm,
+	bmargin=2.5cm,
+	lmargin=1.5cm,
+	rmargin=1.5cm
+}
+\linespread{0.9} % close to 10/13 spacing in ``manuscript''
+
+
+\newcommand{\ie}{{\textit{i.e.}~}}
+\newcommand{\eg}{{\textit{e.g.},~}}
+\newcommand{\equref}[1]{{\xspace}Eq.~(\ref{#1})}
+\newcommand{\figref}[1]{{\xspace}Fig.~\ref{#1}}
+\newcommand{\figrefs}[2]{{\xspace}Figs.~\ref{#1}~and ~\ref{#2}}
+\newcommand{\equrefbegin}[1]{{\xspace}Equation~(\ref{#1})}
+\newcommand{\figrefbegin}[1]{{\xspace}Figure~\ref{#1}}
+\newcommand{\secref}[1]{{\xspace}Sec.~\ref{#1}}
+\renewcommand{\d}{{\mathrm{d}}}
+\newcommand{\equ}[1]{\begin{equation}#1\end{equation}}
+\newcommand{\eqn}[1]{\begin{eqnarray}#1\end{eqnarray}}
+\renewcommand{\vec}[1]{\boldsymbol{#1}}
+\newcommand{\negsp}[1]{\hspace*{-#1mm}}
+
+\newcommand{\todo}[1]{\textcolor{blue}{[TODO: #1]}}
+
+
+\begin{document}
+
+ 
+\title{The ultimate (Gaussian) stellar inference machine}
+ \date{}
+ \author{}
+ 
+\maketitle
+
+This is a brief note describing a model of the positions, velocities, proper motions, and colors of stars. If the likelihood function of those is a multivariate Gaussian (which is the case for Gaia, with strong correlations between parallaxes and proper motions), one can adopte a Gaussian Mixture model for their distributions (joint or split) and analytically marginalize over the true velocity, and colors of each star. As a result, one only need to sample the parameters of the mixture model, as well as the distance and extinction of each star. The effective likelihood function is a simple multivariate Gaussian, derived below. This opens the possibility to implement this model in fast inference/modelling languages like Tensorflow, Stan, or Edward.
+
+A summary of the notation is provided in the table below. Apologies if there are typos in the text or equations!
+
+\begin{tabular}{m{5.8cm}p{8cm}}
+\hspace*{-0.8cm}\includegraphics[width=6.8cm]{pgm.png}
+&
+\begin{tabular}{ll}
+	$\vec{\alpha} = (\vec{\alpha}_1, \cdots, \vec{\alpha}_B)$	&	All parameters of the mixture model\\
+	$\vec{\alpha}_b = (f_b, \vec{\xi}_b, \Sigma_b)$ 	&	Parameters of the $b$ Gaussian of the mixture\\
+	$i$	&	Index of the $i$th star	\\
+	$\vec{n}_i = (\alpha_i, \delta_i)$ 	&	True/observed angular position	\\
+	$r_i$		&	True distance	\\
+	$\vec{v}_i = (v_{x,i}, v_{y,i}, v_{z,i})$	&	True 3D cartesian velocity		\\
+	$\hat{\vec{\mu}}_i = (\mu_{\alpha,i}, \mu_{\delta,i})$	&	Observed proper motion \\
+	$\hat{\varpi}_i$	&	Observed parallax	\\
+	$\vec{E}_i \rightarrow E_{m_i}, E_{C_i}$	&	True magnitude/color extinction at distance $r_i$ 	\\
+	$C_i, \hat{C}_i$	&	True and observed color	\\
+	$M_i$	&	True absolute magnitude \\
+	$\hat{m}_i$	&	Observed apparent magnitude \\
+\end{tabular}
+\end{tabular}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Model}
+
+Our population/distribution model in 8-dimensional space (3D positions and velocities, plus 2D color--magnitude diagram) is a Gaussian mixture,
+\equ{
+	[ \vec{v} \ \vec{n} \ r \ C \ M  ]^T \bigl\vert \ \vec{\alpha} \sim \sum_{b=1}^B f_b \ \mathcal{N}^\mathrm{8D}\bigl(  \vec{\xi}_b; \Sigma_b\bigr)  .
+}	
+The priors will be specified later. Typically, one would adopt conjugate priors which greatly simply the inference, \ie a Dirichlet prior on the amplitudes $\{ f_b\}$, and multivariate Gaussian for each mean $ \vec{\xi}_b$, and Wishard for the covariance $\Sigma_b$.
+
+The full 5-dimensional likelihood, accounting for any covariance between the measurements, is
+\eqn{
+	[\hat{\mu}_{\alpha, i} \ \hat{\mu}_{\delta, i} \ \hat{\varpi}_i \ \hat{C}_i \ \hat{m}_i ]^T \ \bigl\vert \ \vec{v}_i, \vec{n}_i, r_i, E_i, C_i, M_i	\ \sim \ \mathcal{N}^\mathrm{5D}\Bigl( \vec{\psi}_i; \Psi_i \Bigr)
+}
+with the model vector
+\equ{
+	\vec{\psi}_i = \begin{bmatrix} 
+		\mu_{\alpha, i}	=	\Pi_\alpha(\vec{n}_i) \vec{v}_i / r_i	\\ 
+		\mu_{\delta, i}	=	\Pi_\delta(\vec{n}_i) \vec{v}_i / r_i	\\ 
+		1/r_i	\\
+		C_i+E_{C_i}	\\
+		M_i + 5\log r_i +E_{m_i}
+	\end{bmatrix}
+}
+where $\Pi_\alpha$ and $\Pi_\delta$ are projection matrices, projecting the 3D cartesian vector $\vec{v}$ in spherical coordinates.
+$\Psi_i$ is the covariance of the measurements, which could be block diagonal.
+
+
+
+The full posterior distribution, marginalizing over $(\vec{v}_i, C_i, M_i)_{i=1, \cdots, N}$ reads
+\eqn{
+	&&p\Bigl(\vec{\alpha}, \{ r_i, \vec{E}_i \} \Bigl\vert \{\hat{\mu}_{\alpha, i}, \hat{\mu}_{\delta, i} \ \hat{\varpi}_i \ \hat{C}_i \ \hat{m}_i \} \Bigr) \\ 
+	&&= \int\d\{ \vec{v}_i, C_i, M_i\} \ p\Bigl(\vec{\alpha}, \{\vec{v}_i, C_i, M_i, r_i, \vec{E}_i \} \Bigl\vert \{\hat{\mu}_{\alpha, i}, \hat{\mu}_{\delta, i} \ \hat{\varpi}_i \ \hat{C}_i \ \hat{m}_i \} \Bigr) \nonumber\\ 
+	&&= \ p( \vec{\alpha} ) \prod_{i=1}^N \int\d \vec{v}_i \d C_i \d M_i \ p\Bigl(\vec{v}_i, C_i, M_i, r_i \Bigl\vert \vec{\alpha} \Bigr)p\Bigl( \hat{\vec{\mu}}_i \ \hat{\varpi}_i \ \hat{C}_i \ \hat{m}_i  \Bigl\vert \vec{v}_i, C_i, M_i, r_i, \vec{E}_i   \Bigr)   p(\vec{E}_i ) \nonumber\\
+	&&=	\ p( \vec{\alpha} ) \prod_{i=1}^N \ p(\vec{E}_i ) \ \sum_{b=1}^B \ f_b \ \mathcal{L}_{ib} \nonumber
+}
+\eqn{
+	 \mathcal{L}_{ib} \ = \  \int\d \vec{v}_i \d C_i \d M_i  \ \mathcal{N}^\mathrm{5D}\Bigl(
+	 \begin{bmatrix} 
+		\Pi_\alpha(\vec{n}_i) \vec{v}_i / r_i	\\ 
+		\Pi_\delta(\vec{n}_i) \vec{v}_i / r_i	\\ 
+		1/r_i	\\
+		C_i+E_{C_i}	\\
+		M_i + 5\log r_i +E_{m_i}
+	\end{bmatrix} -
+	 \begin{bmatrix} \hat{\mu}_{\alpha, i}\\ \hat{\mu}_{\delta, i} \\ \hat{\varpi}_i \\ \hat{C}_i \\ \hat{m}_i \end{bmatrix} ; \Psi_i \Bigr) 
+	\ \mathcal{N}^\mathrm{8D}\Bigl(  \begin{bmatrix} \vec{v}_i \\ \vec{n}_i \\ r_i \\ C_i \\ M_i  \end{bmatrix} - \vec{\xi}_b; \Sigma_b\Bigr)  
+	\nonumber
+}
+
+Let's put this integral in a simpler, more symbolic form, using $a = [v_{x,i} \ v_{y,i} \ v_{z,i} \ C_i \ M_i]$. The rest of the identification should be fairly obvious, but it fully detailed below.
+We exploit a standard Schur complement trick to isolate the contributions of $a$. 
+
+\eqn{
+	 \mathcal{L} &\ =\ & \int \d a 
+	\ \ \mathcal{N} \Bigl(  \begin{bmatrix}Ra - \hat{a}\\ b \end{bmatrix}; \begin{bmatrix}\Sigma_A\ \Sigma_{C}^T\\\Sigma_C \ \Sigma_B  \end{bmatrix} \Bigr) 
+	 \ \ \mathcal{N} \Bigl(  \begin{bmatrix}a - \beta\\ c \end{bmatrix}; \begin{bmatrix}\Phi_A\ \Phi_{C}^T\\\Phi_C \ \Phi_B  \end{bmatrix} \Bigr) \\
+	&\propto& \int \d a 
+		\ \exp\Bigl(-\frac{1}{2}\bigl( Ra - \hat{a} - \Sigma_C^T\Sigma_B^{-1}b \bigr)^T\bigl( \Sigma_A-\Sigma_C^T\Sigma_B^{-1}\Sigma_C \bigr)^{-1}\bigl( Ra - \hat{a} - \Sigma_C^T\Sigma_B^{-1}b  \bigr)  \Bigr)
+		 \\ && \quad\quad \times \exp\Bigl(-\frac{1}{2}\bigl( a-\beta-\Phi_C\Phi_B^{-1}c \bigr)^T\bigl( \Phi_A-\Phi_C^T\Phi_B^{-1}\Phi_C \bigr)^{-1}\bigl( a-\beta-\Phi_C\Phi_B^{-1}c \bigr)  \Bigr)\nonumber
+		 \\ && \quad\quad \times  \exp\Bigl(-\frac{1}{2} b^T\Sigma_B^{-1}b \Bigr) \   \exp\Bigl(-\frac{1}{2} c^T\Phi_B^{-1}c \Bigr) \nonumber\\
+	& \propto& \ \ \exp\Bigl(-\frac{1}{2} b^T\Sigma_B^{-1}b \Bigr) \   \exp\Bigl(-\frac{1}{2} c^T\Phi_B^{-1}c \Bigr)  \\
+	 &&   \times   \int \d a \exp\Bigl(-\frac{1}{2}\bigl( a-\beta-\Phi_C\Phi_B^{-1}c \bigr)^T\bigl( \Phi_A-\Phi_C^T\Phi_B^{-1}\Phi_C \bigr)^{-1}\bigl( a-\beta-\Phi_C\Phi_B^{-1}c \bigr)  \Bigr)\nonumber
+		 \\ &&  \times  \ \exp\Bigl(-\frac{1}{2}\bigl( a - R^{-1}\hat{a} - R^{-1}\Sigma_C^T\Sigma_B^{-1}b \bigr)^TR^T\bigl( \Sigma_A-\Sigma_C^T\Sigma_B^{-1}\Sigma_C \bigr)^{-1} R\bigl( a - R^{-1}\hat{a} - R^{-1}\Sigma_C^T\Sigma_B^{-1}b  \bigr)  \Bigr)\nonumber\\
+	 & \propto& \ \ \exp\Bigl(-\frac{1}{2} b^T\Sigma_B^{-1}b \Bigr) \   \exp\Bigl(-\frac{1}{2} c^T\Phi_B^{-1}c \Bigr)  \\
+	 &&   \times \  \exp\Bigl(-\frac{1}{2}\bigl( R^{-1}\hat{a} + R^{-1}\Sigma_C^T\Sigma_B^{-1}b -\beta-\Phi_C\Phi_B^{-1}c \bigr)^T \nonumber\\
+	&& \hspace*{4cm} \cdot \ \bigl( \Phi_A-\Phi_C^T\Phi_B^{-1}\Phi_C  + R^{-1} ( \Sigma_A - \Sigma_C^T\Sigma_B^{-1}\Sigma_C )R^{T-1}\bigr)^{-1}    \nonumber\\
+	&& \hspace*{8cm} \cdot \	\bigl( R^{-1}\hat{a} + R^{-1}\Sigma_C^T\Sigma_B^{-1}b -\beta-\Phi_C\Phi_B^{-1}c \bigr)  \Bigr)\nonumber
+}
+
+We see that the marginalization of $a$ results in a Gaussian term. Back to our original problem, we identify
+\eqn{
+	(5\times1)\quad  a &=& [v_{x,i} \ v_{y,i} \ v_{z,i} \ C_i \ M_i]^T \\
+	(4\times1)\quad b &=&  [\hat{\mu}_{\alpha, i}\ \ \hat{\mu}_{\delta, i}\  \ \hat{C}_i - E_{C_i} \ \  \hat{m}_i - 5\log r_i -E_{m_i}]^T\\
+	(6\times1)\quad \beta &=& [\xi_{v_x, b} \ \xi_{v_y, b} \ \xi_{v_z, b} \ \xi_{C, b}\ \xi_{M, b}]^T \\
+	(3\times1)\quad c &=& [\alpha-\xi_{\alpha, b} \  \ \delta-\xi_{\delta, b} \ \ r_i-\xi_{r, b}]^T\\
+	(4\times5)\quad R &=& \begin{bmatrix} 
+		\frac{\cos\delta\cos\alpha}{r_i}	\ &\ 	\frac{\cos\delta\sin\alpha}{r_i}	\ &\ 	\frac{-\sin\alpha}{r_i}	\ &\ 0	\ &\  0\\
+		\frac{-\sin\alpha}{r_i}	\ &\ 	\frac{\cos\alpha}{r_i}	\ &\ 	0	\ &\ 0	\ &\  0\\
+		0 \ &\  0 \ &\ 0 \ &\ 1\ &\  0\\
+		0\ &\  0\ &\  0 \ &\ 0\ &\  1
+	\end{bmatrix} 
+}
+The various matrix blocks are just the original data and model covariances, but partitioned according to those new vectors.
+
+
+
+
+\newpage
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Velocity model only, no color--magnitude diagram}
+
+The posterior distribution reads
+\eqn{
+	&&p\Bigl(\vec{\alpha}, \{ r_i \} \Bigl\vert \{\hat{\mu}_{\alpha, i}, \hat{\mu}_{\delta, i} \ \hat{\varpi}_i  \} \Bigr) \ = \ \int\d\{ \vec{v}_i\} \ p\Bigl(\vec{\alpha}, \{\vec{v}_i,  r_i \} \Bigl\vert \{\hat{\mu}_{\alpha, i}, \hat{\mu}_{\delta, i} \ \hat{\varpi}_i  \} \Bigr) \nonumber\\ 
+	&&= \ p( \vec{\alpha} ) \prod_{i=1}^N \int\d \vec{v}_i \ p(\vec{v}_i \vert \vec{\alpha} ) \ p(r_i) \ p( \hat{\vec{\mu}}_i \ \hat{\varpi}_i \ \vert \vec{v}_i, r_i)  \ =	\ p( \vec{\alpha} ) \prod_{i=1}^N  p(r_i )  \sum_{b=1}^B  f_b  \mathcal{L}_{ib} \nonumber
+}
+\eqn{
+	 \mathcal{L}_{ib} \ &=& \  \int\d \vec{v}_i \ \mathcal{N}^\mathrm{3D}\Bigl(
+	 \begin{bmatrix} 
+		\Pi_\alpha(\vec{n}_i) \vec{v}_i / r_i	\\ 
+		\Pi_\delta(\vec{n}_i) \vec{v}_i / r_i	\\ 
+		1/r_i	
+	\end{bmatrix} -
+	 \begin{bmatrix} \hat{\mu}_{\alpha, i}\\ \hat{\mu}_{\delta, i} \\ \hat{\varpi}_i \end{bmatrix} ; \Psi_i \Bigr) 
+	\ \mathcal{N}^\mathrm{3D}\Bigl(  \vec{v}_i  - \vec{\xi}_b; \Sigma_b\Bigr)
+	\\  
+	&=& \  \int\d \vec{v}_i \ \mathcal{N}^\mathrm{3D}\Bigl(
+	 \begin{bmatrix} 
+		 \Pi\vec{v}_i 	\\ 
+		1/r_i	
+	\end{bmatrix} -
+	 \begin{bmatrix} \hat{\vec{\mu}}_i \\ \hat{\varpi}_i \end{bmatrix} ; 
+	  \begin{bmatrix}
+	  	\Psi_{\vec{\mu}\vec{\mu}, i} & \Psi_{\vec{\mu}\varpi, i}\\
+	  	\Psi_{\vec{\mu}\varpi, i}	& \Psi_{\varpi\varpi, i}
+	   \end{bmatrix} \Bigr) 
+	\ \mathcal{N}^\mathrm{3D}\Bigl(  \vec{v}_i  - \vec{\xi}_b; \Sigma_b\Bigr)  
+	\nonumber \\
+	&\propto&  \int\d \vec{v}_i \exp\Bigl( -\frac{1}{2} \Psi^{-1}_{\varpi\varpi, i} (\hat{\varpi}_i-\frac{1}{r_i})^2 \Bigr) \ 
+	\mathcal{N}^\mathrm{2D}\Bigl(   \Pi\vec{v}_i  - \hat{\vec{\mu}}_i; \Psi_{\vec{\mu}\vec{\mu}, i} - \Psi^T_{\vec{\mu}\varpi, i}\Psi^{-1}_{\varpi\varpi, i} \Psi_{\vec{\mu}\varpi, i}\Bigr)   \ \mathcal{N}^\mathrm{3D}\Bigl(  \vec{v}_i  - \vec{\xi}_b; \Sigma_b\Bigr)  \\
+	&\propto& \exp\Bigl( -\frac{1}{2} \Psi^{-1}_{\varpi\varpi, i} (\hat{\varpi}_i-\frac{1}{r_i})^2 \Bigr) 
+	  \int\d \vec{v}_i \mathcal{N}^\mathrm{3D}\Bigl(   \vec{v}_i  - \Pi^{-1}\hat{\vec{\mu}}_i; \Pi^{-1}(\Psi_{\vec{\mu}\vec{\mu}, i} - \Psi^T_{\vec{\mu}\varpi, i}\Psi^{-1}_{\varpi\varpi, i} \Psi_{\vec{\mu}\varpi, i})\Pi^{-1} \Bigr)   \ \mathcal{N}^\mathrm{3D}\Bigl(  \vec{v}_i  - \vec{\xi}_b; \Sigma_b\Bigr)  \nonumber \\
+	  &\propto& \exp\Bigl( -\frac{1}{2} \Psi^{-1}_{\varpi\varpi, i} (\hat{\varpi}_i-\frac{1}{r_i})^2 \Bigr) 
+	   \mathcal{N}^\mathrm{2D}\Bigl(  \Pi\vec{\xi}_b  - \hat{\vec{\mu}}_i; \Psi_{\vec{\mu}\vec{\mu}, i} - \Psi^T_{\vec{\mu}\varpi, i}\Psi^{-1}_{\varpi\varpi, i} \Psi_{\vec{\mu}\varpi, i} + \Sigma_b \Bigr)   \\
+	   &=& \  \ \mathcal{N}^\mathrm{3D}\Bigl(
+	 \begin{bmatrix} 
+		 \Pi\vec{\xi}_b	\\ 
+		1/r_i	
+	\end{bmatrix} -
+	 \begin{bmatrix} \hat{\vec{\mu}}_i \\ \hat{\varpi}_i \end{bmatrix} ; 
+	  \begin{bmatrix}
+	  	\Psi_{\vec{\mu}\vec{\mu}, i} + \Sigma_b& \Psi_{\vec{\mu}\varpi, i}\\
+	  	\Psi_{\vec{\mu}\varpi, i}	& \Psi_{\varpi\varpi, i}
+	   \end{bmatrix} \Bigr) 
+}
+
+In other words, we just need to draw the observations as
+\equ{
+	 \begin{bmatrix} \hat{\vec{\mu}}_i \\ \hat{\varpi}_i \end{bmatrix} \Bigr \vert \ r_i, \Psi_i, \vec{\xi}_b, \Sigma_b \ \sim  \ \mathcal{N}^\mathrm{3D}\Bigl(
+	 \begin{bmatrix} 
+		 \Pi\vec{\xi}_b	\\ 
+		1/r_i	
+	\end{bmatrix} ;
+	  \begin{bmatrix}
+	  	\Psi_{\vec{\mu}\vec{\mu}, i} + \Pi^T\Sigma_b\Pi &\Psi_{\vec{\mu}\varpi, i}\\
+	  	\Psi_{\vec{\mu}\varpi, i}	& \Psi_{\varpi\varpi, i}
+	   \end{bmatrix} \Bigr) 
+}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\bibliography{bib}
+
+%% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\end{document}
+%% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
