@@ -44,7 +44,7 @@
  
 \maketitle
 
-This is a brief note describing a model of the positions, velocities, proper motions, and colors of stars. If the likelihood function of those is a multivariate Gaussian (which is the case for Gaia, with strong correlations between parallaxes and proper motions), one can adopte a Gaussian Mixture model for their distributions (joint or split) and analytically marginalize over the true velocity, and colors of each star. As a result, one only need to sample the parameters of the mixture model, as well as the distance and extinction of each star. The effective likelihood function is a simple multivariate Gaussian, derived below. This opens the possibility to implement this model in fast inference/modelling languages like Tensorflow, Stan, or Edward.
+This is a brief note describing a model of the positions, velocities, proper motions, and colors of stars. If the likelihood function of those is a multivariate Gaussian (which is the case for Gaia, with strong correlations between parallaxes and proper motions), one can adopt a Gaussian Mixture model for their distributions (joint or split) and analytically marginalize over the true velocity, and colors of each star. As a result, one only need to sample the parameters of the mixture model, as well as the distance and extinction of each star. The effective likelihood function is a simple multivariate Gaussian, derived below. This opens the possibility to implement this model in fast inference/modelling languages like Tensorflow, Stan, or Edward.
 
 A summary of the notation is provided in the table below. Apologies if there are typos in the text or equations!
 
